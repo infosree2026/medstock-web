@@ -23,7 +23,7 @@ if engine:
         with engine.connect() as conn:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS medicines (
-                    sl_no INT PRIMARY KEY,
+                    sl_no TEXT PRIMARY KEY,
                     company_name TEXT,
                     medicine_name TEXT NOT NULL,
                     packing_type TEXT,
@@ -71,7 +71,7 @@ st.markdown("---")
 # FORM & EDIT SECTION
 # ---------------------------------------------------------
 if engine:
-    df_raw = pd.read_sql("SELECT * FROM medicines ORDER BY sl_no ASC;", engine)
+    df_raw = pd.read_sql("SELECT * FROM medicines;", engine)
    
     selected_med = None
     med_options = ["-- ➕ Add New Medicine --"] + [f"Sl:{row['sl_no']} | {row['medicine_name']} ({row['company_name'] if pd.notnull(row['company_name']) else ''})" for _, row in df_raw.iterrows()]
@@ -130,9 +130,9 @@ if engine:
                 try:
                     with engine.connect() as conn:
                         if selected_med is None: # Add New
-                            # Calculate Next sl_no manually to avoid DB Sequence Errors
-                            max_sl_result = conn.execute(text("SELECT COALESCE(MAX(sl_no), 0) FROM medicines;")).fetchone()
-                            next_sl = max_sl_result[0] + 1 if max_sl_result else 1
+                            # Safely cast text sl_no to integer for finding max sl_no
+                            max_sl_result = conn.execute(text("SELECT COALESCE(MAX(NULLIF(regexp_replace(sl_no, '\D', '', 'g'), '')::int), 0) FROM medicines;")).fetchone()
+                            next_sl = str((max_sl_result[0] if max_sl_result else 0) + 1)
                            
                             conn.execute(
                                 text("""
@@ -158,7 +158,7 @@ if engine:
                                 text("""
                                     UPDATE medicines
                                     SET company_name=:c, medicine_name=:m, packing_type=:pt, pack_size=:ps, rate=:r, indications=:i, expiry_date=:e, stock_available=:s, indent=:ind
-                                    WHERE sl_no = :sl;
+                                    WHERE CAST(sl_no AS TEXT) = :sl;
                                 """),
                                 {
                                     "c": company_name,
@@ -170,7 +170,7 @@ if engine:
                                     "e": expiry_date,
                                     "s": int(stock_available),
                                     "ind": indent,
-                                    "sl": int(selected_med['sl_no'])
+                                    "sl": str(selected_med['sl_no'])
                                 }
                             )
                             st.success(f"Updated '{medicine_name}' successfully!")
@@ -191,9 +191,9 @@ if engine:
                                 text("""
                                     UPDATE medicines
                                     SET stock_available = stock_available - :sq, total_sold = total_sold + :sq
-                                    WHERE sl_no = :sl;
+                                    WHERE CAST(sl_no AS TEXT) = :sl;
                                 """),
-                                {"sq": int(sale_qty), "sl": int(selected_med['sl_no'])}
+                                {"sq": int(sale_qty), "sl": str(selected_med['sl_no'])}
                             )
                             conn.commit()
                         st.success(f"Sold {sale_qty} unit(s) of '{selected_med['medicine_name']}'. Total Amount: ₹{sale_qty * float(rate):.2f}")
@@ -238,7 +238,9 @@ if engine:
             elif sort_option == "Expiry Date (Nearest)":
                 df_table = df_table.sort_values(by="expiry_date", ascending=True)
             else:
-                df_table = df_table.sort_values(by="sl_no", ascending=True)
+                # Convert sl_no to numeric for correct sorting
+                df_table['sl_no_num'] = pd.to_numeric(df_table['sl_no'], errors='coerce')
+                df_table = df_table.sort_values(by="sl_no_num", ascending=True).drop(columns=['sl_no_num'])
 
             # Rename columns
             df_display = df_table.rename(columns={
@@ -282,7 +284,7 @@ if engine:
                     if selected_rows_to_del:
                         with engine.connect() as conn:
                             for sl in selected_rows_to_del:
-                                conn.execute(text("DELETE FROM medicines WHERE sl_no = :sl;"), {"sl": int(sl)})
+                                conn.execute(text("DELETE FROM medicines WHERE CAST(sl_no AS TEXT) = :sl;"), {"sl": str(sl)})
                             conn.commit()
                         st.success(f"Deleted {len(selected_rows_to_del)} item(s) successfully!")
                         st.rerun()
