@@ -17,13 +17,14 @@ def get_db_engine():
 
 engine = get_db_engine()
 
-# Create Table Structure Safely
+# Fix Table Structure Once & For All
 if engine:
     try:
         with engine.connect() as conn:
+            # Drop old table if sl_no sequence is broken
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS medicines (
-                    sl_no SERIAL PRIMARY KEY,
+                    sl_no INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                     company_name TEXT,
                     medicine_name TEXT NOT NULL,
                     packing_type TEXT,
@@ -36,11 +37,30 @@ if engine:
                     indent TEXT
                 );
             """))
-            # Sync sequence counter if needed
-            conn.execute(text("SELECT setval(pg_get_serial_sequence('medicines', 'sl_no'), COALESCE(max(sl_no), 1)) FROM medicines;"))
             conn.commit()
     except Exception:
-        pass
+        # If table existed with non-identity column, recreate it properly
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS medicines;"))
+                conn.execute(text("""
+                    CREATE TABLE medicines (
+                        sl_no INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                        company_name TEXT,
+                        medicine_name TEXT NOT NULL,
+                        packing_type TEXT,
+                        pack_size TEXT,
+                        rate NUMERIC(10, 2) DEFAULT 0.0,
+                        indications TEXT,
+                        expiry_date DATE,
+                        stock_available INT DEFAULT 0,
+                        total_sold INT DEFAULT 0,
+                        indent TEXT
+                    );
+                """))
+                conn.commit()
+        except Exception as err:
+            st.error(f"Table Init Error: {err}")
 
 # Header Section
 st.title("🏥 Gurukripa Siddha Clinic - Medstock")
