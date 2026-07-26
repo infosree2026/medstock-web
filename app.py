@@ -17,7 +17,7 @@ def get_db_engine():
 
 engine = get_db_engine()
 
-# Create Table Structure
+# Create Table Structure Safely
 if engine:
     try:
         with engine.connect() as conn:
@@ -79,8 +79,13 @@ if engine:
     selected_option = st.selectbox("✏️ Select Medicine to Edit / Record Sale (or choose Add New):", med_options)
    
     if selected_option != "-- ➕ Add New Medicine --":
-        sl_selected = int(selected_option.split("|")[0].replace("Sl:", "").strip())
-        selected_med = df_raw[df_raw['sl_no'] == sl_selected].iloc[0]
+        try:
+            sl_selected = selected_option.split("|")[0].replace("Sl:", "").strip()
+            matched_df = df_raw[df_raw['sl_no'].astype(str) == str(sl_selected)]
+            if not matched_df.empty:
+                selected_med = matched_df.iloc[0]
+        except Exception:
+            selected_med = None
 
     st.subheader("📝 Medicine Details & Actions")
    
@@ -94,9 +99,15 @@ if engine:
             indent = st.text_input("Indent:", value=selected_med['indent'] if selected_med is not None and pd.notnull(selected_med['indent']) else "")
 
         with c2:
-            medicine_name = st.text_input("Medicine Name*:", value=selected_med['medicine_name'] if selected_med is not None else "")
+            medicine_name = st.text_input("Medicine Name*:", value=selected_med['medicine_name'] if selected_med is not None and pd.notnull(selected_med['medicine_name']) else "")
             pack_size = st.text_input("Pack Size:", value=selected_med['pack_size'] if selected_med is not None and pd.notnull(selected_med['pack_size']) else "")
-            exp_val = pd.to_datetime(selected_med['expiry_date']).date() if selected_med is not None and pd.notnull(selected_med['expiry_date']) else date.today() + timedelta(days=365)
+           
+            exp_val = date.today() + timedelta(days=365)
+            if selected_med is not None and pd.notnull(selected_med['expiry_date']):
+                try:
+                    exp_val = pd.to_datetime(selected_med['expiry_date']).date()
+                except:
+                    pass
             expiry_date = st.date_input("Expiry Date:", value=exp_val)
 
         with c3:
@@ -131,9 +142,9 @@ if engine:
                             text("""
                                 UPDATE medicines
                                 SET company_name=:c, medicine_name=:m, packing_type=:pt, pack_size=:ps, rate=:r, indications=:i, expiry_date=:e, stock_available=:s, indent=:ind
-                                WHERE sl_no=:sl;
+                                WHERE CAST(sl_no AS TEXT) = :sl;
                             """),
-                            {"c": company_name, "m": medicine_name, "pt": packing_type, "ps": pack_size, "r": rate, "i": indications, "e": expiry_date, "s": stock_available, "ind": indent, "sl": int(selected_med['sl_no'])}
+                            {"c": company_name, "m": medicine_name, "pt": packing_type, "ps": pack_size, "r": rate, "i": indications, "e": expiry_date, "s": stock_available, "ind": indent, "sl": str(selected_med['sl_no'])}
                         )
                         st.success(f"Updated '{medicine_name}' successfully!")
                     conn.commit()
@@ -150,9 +161,9 @@ if engine:
                             text("""
                                 UPDATE medicines
                                 SET stock_available = stock_available - :sq, total_sold = total_sold + :sq
-                                WHERE sl_no = :sl;
+                                WHERE CAST(sl_no AS TEXT) = :sl;
                             """),
-                            {"sq": sale_qty, "sl": int(selected_med['sl_no'])}
+                            {"sq": sale_qty, "sl": str(selected_med['sl_no'])}
                         )
                         conn.commit()
                     st.success(f"Sold {sale_qty} unit(s) of '{selected_med['medicine_name']}'. Total Amount: ₹{sale_qty * float(rate):.2f}")
@@ -225,23 +236,21 @@ if engine:
                         return ['background-color: #ff9999; color: black;'] * len(row)
                 return [''] * len(row)
 
-            # Interactive Table with Tick Selection
-            edited_df = st.data_editor(
+            # Interactive Table
+            st.dataframe(
                 df_display.style.apply(highlight_expiry, axis=1),
-                use_container_width=True,
-                num_rows="dynamic",
-                disabled=["Serial No", "Total Sold"] # Allow editing all columns
+                use_container_width=True
             )
 
             # Delete Selected / Ticked Medicines
             col_del1, col_del2 = st.columns([1, 4])
             with col_del1:
-                selected_rows_to_del = st.multiselect("Select Serial No to Delete Ticked:", df_display["Serial No"].tolist())
+                selected_rows_to_del = st.multiselect("Select Serial No to Delete Ticked:", df_display["Serial No"].astype(str).tolist())
                 if st.button("🗑️ Delete Selected Ticked", type="primary"):
                     if selected_rows_to_del:
                         with engine.connect() as conn:
                             for sl in selected_rows_to_del:
-                                conn.execute(text("DELETE FROM medicines WHERE sl_no = :sl;"), {"sl": int(sl)})
+                                conn.execute(text("DELETE FROM medicines WHERE CAST(sl_no AS TEXT) = :sl;"), {"sl": str(sl)})
                             conn.commit()
                         st.success(f"Deleted {len(selected_rows_to_del)} item(s) successfully!")
                         st.rerun()
