@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, text
 import pandas as pd
 from datetime import date, timedelta
 
-st.set_page_config(page_title="Gurukripa Siddha Clinic", layout="wide", page_icon="💊")
+st.set_page_config(page_title="Gurukripa Siddha Clinic - Medstock", layout="wide", page_icon="💊")
 
 # Database Connection
 @st.cache_resource
@@ -17,255 +17,243 @@ def get_db_engine():
 
 engine = get_db_engine()
 
-# Create Tables Safely
+# Create Table Structure
 if engine:
     try:
         with engine.connect() as conn:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS medicines (
-                    id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    category TEXT,
-                    quantity INT DEFAULT 0,
-                    price NUMERIC(10, 2),
-                    expiry_date DATE
+                    sl_no SERIAL PRIMARY KEY,
+                    company_name TEXT,
+                    medicine_name TEXT NOT NULL,
+                    packing_type TEXT,
+                    pack_size TEXT,
+                    rate NUMERIC(10, 2) DEFAULT 0.0,
+                    indications TEXT,
+                    expiry_date DATE,
+                    stock_available INT DEFAULT 0,
+                    total_sold INT DEFAULT 0,
+                    indent TEXT
                 );
             """))
             conn.commit()
     except Exception as e:
-        st.error(f"Table Creation Error: {e}")
+        pass
 
-# Header
-st.title("🏥 Gurukripa Siddha Clinic")
-st.caption("Medstock Management System")
+# Header Section
+st.title("🏥 Gurukripa Siddha Clinic - Medstock")
+st.markdown("---")
+
+# ---------------------------------------------------------
+# TOP CONTROLS (SEARCH & SORT)
+# ---------------------------------------------------------
+col_search, col_sort, col_date = st.columns([3, 2, 2])
+
+with col_search:
+    search_query = st.text_input("🔍 Search Medicine / Company:", placeholder="Type medicine or company name...")
+
+with col_sort:
+    sort_option = st.selectbox("↕️ Sort Order:", [
+        "Medicine Name (A-Z)",
+        "Medicine Name (Z-A)",
+        "Company Name (A-Z)",
+        "Serial No (Ascending)",
+        "Stock (Low to High)",
+        "Expiry Date (Nearest)"
+    ])
+
+with col_date:
+    st.info(f"📅 Today: **{date.today().strftime('%d-%b-%Y')}**")
 
 st.markdown("---")
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📦 Medicine Inventory",
-    "➕ Add / Edit Stock",
-    "🛒 Record Sale",
-    "🗑️ Manage / Delete"
-])
-
 # ---------------------------------------------------------
-# TAB 1: INVENTORY & SEARCH
+# FORM & EDIT SECTION
 # ---------------------------------------------------------
-with tab1:
-    st.header("Stock Inventory")
-    if engine:
-        try:
-            col_search, col_sort = st.columns([3, 1])
-           
-            with col_search:
-                search_query = st.text_input("🔍 Search Medicine by Name or Category", "")
-           
-            with col_sort:
-                sort_option = st.selectbox("↕️ Sort By", ["Medicine Name (A-Z)", "Medicine Name (Z-A)", "Quantity (Low to High)", "Quantity (High to Low)"])
-           
-            # Fetch raw data cleanly from postgresql
-            raw_query = "SELECT * FROM medicines;"
-            df = pd.read_sql(raw_query, engine)
-           
-            if not df.empty:
-                # Rename columns safely in pandas
-                rename_map = {
-                    'name': 'Medicine Name',
-                    'category': 'Category',
-                    'quantity': 'Quantity',
-                    'price': 'Price (₹)',
-                    'expiry_date': 'Expiry Date'
-                }
-                if 'id' in df.columns:
-                    rename_map['id'] = 'ID'
-               
-                df = df.rename(columns=rename_map)
+if engine:
+    df_raw = pd.read_sql("SELECT * FROM medicines ORDER BY sl_no ASC;", engine)
+   
+    selected_med = None
+    med_options = ["-- ➕ Add New Medicine --"] + [f"Sl:{row['sl_no']} | {row['medicine_name']} ({row['company_name'] if pd.notnull(row['company_name']) else ''})" for _, row in df_raw.iterrows()]
+   
+    selected_option = st.selectbox("✏️ Select Medicine to Edit / Record Sale (or choose Add New):", med_options)
+   
+    if selected_option != "-- ➕ Add New Medicine --":
+        sl_selected = int(selected_option.split("|")[0].replace("Sl:", "").strip())
+        selected_med = df_raw[df_raw['sl_no'] == sl_selected].iloc[0]
 
-                # Search Filter
-                if search_query:
-                    search_lower = search_query.lower()
-                    df = df[
-                        df['Medicine Name'].astype(str).str.lower().str.contains(search_lower, na=False) |
-                        df['Category'].astype(str).str.lower().str.contains(search_lower, na=False)
-                    ]
+    st.subheader("📝 Medicine Details & Actions")
+   
+    with st.form("main_form", clear_on_submit=False):
+        c1, c2, c3 = st.columns(3)
+       
+        with c1:
+            company_name = st.text_input("Company Name:", value=selected_med['company_name'] if selected_med is not None and pd.notnull(selected_med['company_name']) else "")
+            packing_type = st.text_input("Packing Type (e.g. Bottle, Packet, Jar):", value=selected_med['packing_type'] if selected_med is not None and pd.notnull(selected_med['packing_type']) else "Bottle")
+            indications = st.text_input("Indications:", value=selected_med['indications'] if selected_med is not None and pd.notnull(selected_med['indications']) else "")
+            indent = st.text_input("Indent:", value=selected_med['indent'] if selected_med is not None and pd.notnull(selected_med['indent']) else "")
 
-                # Sorting logic
-                if sort_option == "Medicine Name (A-Z)":
-                    df = df.sort_values(by="Medicine Name", ascending=True)
-                elif sort_option == "Medicine Name (Z-A)":
-                    df = df.sort_values(by="Medicine Name", ascending=False)
-                elif sort_option == "Quantity (Low to High)":
-                    df = df.sort_values(by="Quantity", ascending=True)
-                elif sort_option == "Quantity (High to Low)":
-                    df = df.sort_values(by="Quantity", ascending=False)
+        with c2:
+            medicine_name = st.text_input("Medicine Name*:", value=selected_med['medicine_name'] if selected_med is not None else "")
+            pack_size = st.text_input("Pack Size:", value=selected_med['pack_size'] if selected_med is not None and pd.notnull(selected_med['pack_size']) else "")
+            exp_val = pd.to_datetime(selected_med['expiry_date']).date() if selected_med is not None and pd.notnull(selected_med['expiry_date']) else date.today() + timedelta(days=365)
+            expiry_date = st.date_input("Expiry Date:", value=exp_val)
 
-                today = date.today()
-                near_expiry = today + timedelta(days=30)
-               
-                # Expiry Highlight
-                def highlight_expiry(row):
-                    if 'Expiry Date' in row and pd.notnull(row["Expiry Date"]):
-                        exp = pd.to_datetime(row["Expiry Date"]).date()
-                        if exp <= today:
-                            return ['background-color: #ff4d4d; color: white; font-weight: bold;'] * len(row)
-                        elif exp <= near_expiry:
-                            return ['background-color: #ff9999; color: black;'] * len(row)
-                    return [''] * len(row)
+        with c3:
+            rate = st.number_input("Rate (₹):", min_value=0.0, value=float(selected_med['rate']) if selected_med is not None and pd.notnull(selected_med['rate']) else 0.0, step=0.5)
+            stock_available = st.number_input("Stock Available:", min_value=0, value=int(selected_med['stock_available']) if selected_med is not None and pd.notnull(selected_med['stock_available']) else 0, step=1)
+            sale_qty = st.number_input("Sale Qty (Deduct Stock):", min_value=0, value=0, step=1)
 
-                st.dataframe(df.style.apply(highlight_expiry, axis=1), use_container_width=True)
-               
-                # Warnings
-                if 'Expiry Date' in df.columns:
-                    expired_df = df[pd.to_datetime(df['Expiry Date']).dt.date <= today]
-                    if not expired_df.empty:
-                        st.error(f"🚨🚨 **ALERT:** {len(expired_df)} medicine(s) have EXPIRED!")
-               
-                low_stock = df[df["Quantity"] <= 5]
-                if not low_stock.empty:
-                    st.warning(f"⚠️ **Stock Alert:** {len(low_stock)} medicine(s) have low stock (5 or less)!")
+        b1, b2, b3 = st.columns(3)
+       
+        with b1:
+            btn_save = st.form_submit_button("➕ / ✏️ Save / Update Medicine", type="primary")
+        with b2:
+            btn_sale = st.form_submit_button("🛒 Record Sale & Update Stock")
+        with b3:
+            btn_clear = st.form_submit_button("🔄 Clear Form")
+
+        # Logic: Add or Edit
+        if btn_save:
+            if medicine_name:
+                with engine.connect() as conn:
+                    if selected_med is None: # Add New
+                        conn.execute(
+                            text("""
+                                INSERT INTO medicines (company_name, medicine_name, packing_type, pack_size, rate, indications, expiry_date, stock_available, indent)
+                                VALUES (:c, :m, :pt, :ps, :r, :i, :e, :s, :ind);
+                            """),
+                            {"c": company_name, "m": medicine_name, "pt": packing_type, "ps": pack_size, "r": rate, "i": indications, "e": expiry_date, "s": stock_available, "ind": indent}
+                        )
+                        st.success(f"Added '{medicine_name}' successfully!")
+                    else: # Update Existing
+                        conn.execute(
+                            text("""
+                                UPDATE medicines
+                                SET company_name=:c, medicine_name=:m, packing_type=:pt, pack_size=:ps, rate=:r, indications=:i, expiry_date=:e, stock_available=:s, indent=:ind
+                                WHERE sl_no=:sl;
+                            """),
+                            {"c": company_name, "m": medicine_name, "pt": packing_type, "ps": pack_size, "r": rate, "i": indications, "e": expiry_date, "s": stock_available, "ind": indent, "sl": int(selected_med['sl_no'])}
+                        )
+                        st.success(f"Updated '{medicine_name}' successfully!")
+                    conn.commit()
+                st.rerun()
             else:
-                st.info("No medicines added yet!")
-        except Exception as e:
-            st.error(f"Error loading data: {e}")
+                st.warning("Please enter Medicine Name.")
+
+        # Logic: Sale
+        if btn_sale:
+            if selected_med is not None and sale_qty > 0:
+                if sale_qty <= int(selected_med['stock_available']):
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("""
+                                UPDATE medicines
+                                SET stock_available = stock_available - :sq, total_sold = total_sold + :sq
+                                WHERE sl_no = :sl;
+                            """),
+                            {"sq": sale_qty, "sl": int(selected_med['sl_no'])}
+                        )
+                        conn.commit()
+                    st.success(f"Sold {sale_qty} unit(s) of '{selected_med['medicine_name']}'. Total Amount: ₹{sale_qty * float(rate):.2f}")
+                    st.rerun()
+                else:
+                    st.error("Sale quantity exceeds available stock!")
+            else:
+                st.warning("Select a medicine and enter Sale Qty > 0.")
+
+st.markdown("---")
 
 # ---------------------------------------------------------
-# TAB 2: ADD / EDIT STOCK
+# TABLE & TICK DELETE SECTION
 # ---------------------------------------------------------
-with tab2:
-    st.header("Add or Edit Medicine Details")
-   
-    action = st.radio("Choose Action", ["Add New Medicine", "Edit Existing Medicine (All Fields)"], horizontal=True)
-   
-    if action == "Add New Medicine":
-        with st.form("add_form", clear_on_submit=True):
-            name = st.text_input("Medicine Name*")
-            category = st.text_input("Category (e.g., Lehyam, Choornam, Thailam)")
-            quantity = st.number_input("Quantity", min_value=1, step=1)
-            price = st.number_input("Price per unit (₹)", min_value=0.0, step=0.5)
-            exp_date = st.date_input("Expiry Date", value=date.today() + timedelta(days=365))
-           
-            submitted = st.form_submit_button("Save Medicine")
-            if submitted:
-                if name:
-                    try:
+st.subheader("📦 Stock Inventory Table")
+
+if engine:
+    try:
+        df_table = pd.read_sql("SELECT * FROM medicines;", engine)
+       
+        if not df_table.empty:
+            # Search Filter
+            if search_query:
+                sq_lower = search_query.lower()
+                df_table = df_table[
+                    df_table['medicine_name'].astype(str).str.lower().str.contains(sq_lower, na=False) |
+                    df_table['company_name'].astype(str).str.lower().str.contains(sq_lower, na=False) |
+                    df_table['indications'].astype(str).str.lower().str.contains(sq_lower, na=False)
+                ]
+
+            # Sorting Logic
+            if sort_option == "Medicine Name (A-Z)":
+                df_table = df_table.sort_values(by="medicine_name", ascending=True)
+            elif sort_option == "Medicine Name (Z-A)":
+                df_table = df_table.sort_values(by="medicine_name", ascending=False)
+            elif sort_option == "Company Name (A-Z)":
+                df_table = df_table.sort_values(by="company_name", ascending=True)
+            elif sort_option == "Stock (Low to High)":
+                df_table = df_table.sort_values(by="stock_available", ascending=True)
+            elif sort_option == "Expiry Date (Nearest)":
+                df_table = df_table.sort_values(by="expiry_date", ascending=True)
+            else:
+                df_table = df_table.sort_values(by="sl_no", ascending=True)
+
+            # Rename columns
+            df_display = df_table.rename(columns={
+                'sl_no': 'Serial No',
+                'company_name': 'Company Name',
+                'medicine_name': 'Medicine Name',
+                'packing_type': 'Packing Type',
+                'pack_size': 'Pack Size',
+                'rate': 'Rate (₹)',
+                'indications': 'Indications',
+                'expiry_date': 'Expiry Date',
+                'stock_available': 'Stock Available',
+                'total_sold': 'Total Sold',
+                'indent': 'Indent'
+            })
+
+            # Expiry RED Color Styling
+            today = date.today()
+            near_exp = today + timedelta(days=30)
+
+            def highlight_expiry(row):
+                if pd.notnull(row["Expiry Date"]):
+                    exp = pd.to_datetime(row["Expiry Date"]).date()
+                    if exp <= today:
+                        return ['background-color: #ff4d4d; color: white; font-weight: bold;'] * len(row)
+                    elif exp <= near_exp:
+                        return ['background-color: #ff9999; color: black;'] * len(row)
+                return [''] * len(row)
+
+            # Interactive Table with Tick Selection
+            edited_df = st.data_editor(
+                df_display.style.apply(highlight_expiry, axis=1),
+                use_container_width=True,
+                num_rows="dynamic",
+                disabled=["Serial No", "Total Sold"] # Allow editing all columns
+            )
+
+            # Delete Selected / Ticked Medicines
+            col_del1, col_del2 = st.columns([1, 4])
+            with col_del1:
+                selected_rows_to_del = st.multiselect("Select Serial No to Delete Ticked:", df_display["Serial No"].tolist())
+                if st.button("🗑️ Delete Selected Ticked", type="primary"):
+                    if selected_rows_to_del:
                         with engine.connect() as conn:
-                            conn.execute(
-                                text("INSERT INTO medicines (name, category, quantity, price, expiry_date) VALUES (:n, :c, :q, :p, :e);"),
-                                {"n": name, "c": category, "q": quantity, "p": price, "e": exp_date}
-                            )
+                            for sl in selected_rows_to_del:
+                                conn.execute(text("DELETE FROM medicines WHERE sl_no = :sl;"), {"sl": int(sl)})
                             conn.commit()
-                        st.success(f"Added '{name}' successfully!")
+                        st.success(f"Deleted {len(selected_rows_to_del)} item(s) successfully!")
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Error adding medicine: {e}")
-                else:
-                    st.warning("Please enter medicine name.")
-                   
-    else: # Edit Existing Medicine
-        if engine:
-            try:
-                df_edit = pd.read_sql("SELECT * FROM medicines ORDER BY name ASC;", engine)
-                if not df_edit.empty:
-                    med_dict = {f"{row['name']}": row for _, row in df_edit.iterrows()}
-                    selected_med_str = st.selectbox("Select Medicine to Edit", list(med_dict.keys()))
-                    selected_med = med_dict[selected_med_str]
-                   
-                    st.subheader(f"Editing: {selected_med['name']}")
-                   
-                    with st.form("edit_form"):
-                        edit_name = st.text_input("Medicine Name", value=selected_med['name'])
-                        edit_category = st.text_input("Category", value=selected_med['category'] if pd.notnull(selected_med['category']) else "")
-                        edit_quantity = st.number_input("Quantity", min_value=0, value=int(selected_med['quantity']), step=1)
-                        edit_price = st.number_input("Price per unit (₹)", min_value=0.0, value=float(selected_med['price'] if pd.notnull(selected_med['price']) else 0.0), step=0.5)
-                       
-                        curr_exp = selected_med['expiry_date'] if pd.notnull(selected_med['expiry_date']) else date.today()
-                        edit_exp_date = st.date_input("Expiry Date", value=curr_exp)
-                       
-                        update_submitted = st.form_submit_button("Update Medicine Details")
-                        if update_submitted:
-                            with engine.connect() as conn:
-                                # Primary key column check
-                                pk_col = 'id' if 'id' in selected_med else selected_med.index[0]
-                                conn.execute(
-                                    text(f"""
-                                        UPDATE medicines
-                                        SET name = :n, category = :c, quantity = :q, price = :p, expiry_date = :e
-                                        WHERE {pk_col} = :id_val;
-                                    """),
-                                    {
-                                        "n": edit_name,
-                                        "c": edit_category,
-                                        "q": edit_quantity,
-                                        "p": edit_price,
-                                        "e": edit_exp_date,
-                                        "id_val": selected_med[pk_col]
-                                    }
-                                )
-                                conn.commit()
-                            st.success(f"Updated '{edit_name}' successfully!")
-                            st.rerun()
-                else:
-                    st.info("No medicines available to edit.")
-            except Exception as e:
-                st.error(f"Error loading medicine for edit: {e}")
+                    else:
+                        st.warning("Please select Serial No to delete.")
 
-# ---------------------------------------------------------
-# TAB 3: RECORD SALE
-# ---------------------------------------------------------
-with tab3:
-    st.header("Record Sale / Dispense Medicine")
-    if engine:
-        try:
-            df_sale = pd.read_sql("SELECT * FROM medicines WHERE quantity > 0 ORDER BY name ASC;", engine)
-            if not df_sale.empty:
-                med_dict = {f"{row['name']} (Stock: {row['quantity']} | Price: ₹{row['price']})": row for _, row in df_sale.iterrows()}
-                selected_med_str = st.selectbox("Select Medicine Sold", list(med_dict.keys()))
-                selected_med = med_dict[selected_med_str]
-               
-                sell_qty = st.number_input("Quantity Sold", min_value=1, max_value=int(selected_med['quantity']), step=1)
-                total_price = sell_qty * float(selected_med['price'] if pd.notnull(selected_med['price']) else 0.0)
-               
-                st.write(f"💵 **Total Amount: ₹{total_price:.2f}**")
-               
-                if st.button("Complete Sale", type="primary"):
-                    pk_col = 'id' if 'id' in selected_med else selected_med.index[0]
-                    with engine.connect() as conn:
-                        conn.execute(
-                            text(f"UPDATE medicines SET quantity = quantity - :q WHERE {pk_col} = :id_val;"),
-                            {"q": sell_qty, "id_val": selected_med[pk_col]}
-                        )
-                        conn.commit()
-                    st.success(f"Sold {sell_qty} unit(s) of '{selected_med['name']}'.")
-                    st.rerun()
-            else:
-                st.info("No medicines currently in stock to sell.")
-        except Exception as e:
-            st.error(f"Error recording sale: {e}")
+            # Alerts
+            expired_items = df_display[pd.to_datetime(df_display['Expiry Date']).dt.date <= today]
+            if not expired_items.empty:
+                st.error(f"🚨 **ALERT:** {len(expired_items)} medicine(s) have EXPIRED (Highlighted in Red)!")
 
-# ---------------------------------------------------------
-# TAB 4: DELETE / MANAGE
-# ---------------------------------------------------------
-with tab4:
-    st.header("Delete Medicine Entry")
-    if engine:
-        try:
-            df_del = pd.read_sql("SELECT * FROM medicines ORDER BY name ASC;", engine)
-            if not df_del.empty:
-                med_list = {f"{row['name']}": row for _, row in df_del.iterrows()}
-                selected_med_str = st.selectbox("Select Medicine to Delete", list(med_list.keys()))
-                selected_med = med_list[selected_med_str]
-               
-                if st.button("🗑️ Delete Selected Medicine", type="primary"):
-                    pk_col = 'id' if 'id' in selected_med else selected_med.index[0]
-                    with engine.connect() as conn:
-                        conn.execute(
-                            text(f"DELETE FROM medicines WHERE {pk_col} = :id_val;"),
-                            {"id_val": selected_med[pk_col]}
-                        )
-                        conn.commit()
-                    st.success("Medicine deleted successfully!")
-                    st.rerun()
-            else:
-                st.info("No medicines available to delete.")
-        except Exception as e:
-            st.error(f"Error deleting medicine: {e}")
+        else:
+            st.info("No medicines added yet!")
+    except Exception as e:
+        st.error(f"Error loading table: {e}")
