@@ -17,14 +17,13 @@ def get_db_engine():
 
 engine = get_db_engine()
 
-# Fix Table Structure Once & For All
+# Safe Table Setup
 if engine:
     try:
         with engine.connect() as conn:
-            # Drop old table if sl_no sequence is broken
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS medicines (
-                    sl_no INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    sl_no INT PRIMARY KEY,
                     company_name TEXT,
                     medicine_name TEXT NOT NULL,
                     packing_type TEXT,
@@ -39,28 +38,7 @@ if engine:
             """))
             conn.commit()
     except Exception:
-        # If table existed with non-identity column, recreate it properly
-        try:
-            with engine.connect() as conn:
-                conn.execute(text("DROP TABLE IF EXISTS medicines;"))
-                conn.execute(text("""
-                    CREATE TABLE medicines (
-                        sl_no INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        company_name TEXT,
-                        medicine_name TEXT NOT NULL,
-                        packing_type TEXT,
-                        pack_size TEXT,
-                        rate NUMERIC(10, 2) DEFAULT 0.0,
-                        indications TEXT,
-                        expiry_date DATE,
-                        stock_available INT DEFAULT 0,
-                        total_sold INT DEFAULT 0,
-                        indent TEXT
-                    );
-                """))
-                conn.commit()
-        except Exception as err:
-            st.error(f"Table Init Error: {err}")
+        pass
 
 # Header Section
 st.title("🏥 Gurukripa Siddha Clinic - Medstock")
@@ -152,12 +130,17 @@ if engine:
                 try:
                     with engine.connect() as conn:
                         if selected_med is None: # Add New
+                            # Calculate Next sl_no manually to avoid DB Sequence Errors
+                            max_sl_result = conn.execute(text("SELECT COALESCE(MAX(sl_no), 0) FROM medicines;")).fetchone()
+                            next_sl = max_sl_result[0] + 1 if max_sl_result else 1
+                           
                             conn.execute(
                                 text("""
-                                    INSERT INTO medicines (company_name, medicine_name, packing_type, pack_size, rate, indications, expiry_date, stock_available, indent)
-                                    VALUES (:c, :m, :pt, :ps, :r, :i, :e, :s, :ind);
+                                    INSERT INTO medicines (sl_no, company_name, medicine_name, packing_type, pack_size, rate, indications, expiry_date, stock_available, total_sold, indent)
+                                    VALUES (:sl, :c, :m, :pt, :ps, :r, :i, :e, :s, 0, :ind);
                                 """),
                                 {
+                                    "sl": next_sl,
                                     "c": company_name,
                                     "m": medicine_name,
                                     "pt": packing_type,
