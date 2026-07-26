@@ -36,8 +36,10 @@ if engine:
                     indent TEXT
                 );
             """))
+            # Sync sequence counter if needed
+            conn.execute(text("SELECT setval(pg_get_serial_sequence('medicines', 'sl_no'), COALESCE(max(sl_no), 1)) FROM medicines;"))
             conn.commit()
-    except Exception as e:
+    except Exception:
         pass
 
 # Header Section
@@ -93,20 +95,20 @@ if engine:
         c1, c2, c3 = st.columns(3)
        
         with c1:
-            company_name = st.text_input("Company Name:", value=selected_med['company_name'] if selected_med is not None and pd.notnull(selected_med['company_name']) else "")
-            packing_type = st.text_input("Packing Type (e.g. Bottle, Packet, Jar):", value=selected_med['packing_type'] if selected_med is not None and pd.notnull(selected_med['packing_type']) else "Bottle")
-            indications = st.text_input("Indications:", value=selected_med['indications'] if selected_med is not None and pd.notnull(selected_med['indications']) else "")
-            indent = st.text_input("Indent:", value=selected_med['indent'] if selected_med is not None and pd.notnull(selected_med['indent']) else "")
+            company_name = st.text_input("Company Name:", value=str(selected_med['company_name']) if selected_med is not None and pd.notnull(selected_med['company_name']) else "")
+            packing_type = st.text_input("Packing Type (e.g. Bottle, Packet, Jar):", value=str(selected_med['packing_type']) if selected_med is not None and pd.notnull(selected_med['packing_type']) else "Bottle")
+            indications = st.text_input("Indications:", value=str(selected_med['indications']) if selected_med is not None and pd.notnull(selected_med['indications']) else "")
+            indent = st.text_input("Indent:", value=str(selected_med['indent']) if selected_med is not None and pd.notnull(selected_med['indent']) else "")
 
         with c2:
-            medicine_name = st.text_input("Medicine Name*:", value=selected_med['medicine_name'] if selected_med is not None and pd.notnull(selected_med['medicine_name']) else "")
-            pack_size = st.text_input("Pack Size:", value=selected_med['pack_size'] if selected_med is not None and pd.notnull(selected_med['pack_size']) else "")
+            medicine_name = st.text_input("Medicine Name*:", value=str(selected_med['medicine_name']) if selected_med is not None and pd.notnull(selected_med['medicine_name']) else "")
+            pack_size = st.text_input("Pack Size:", value=str(selected_med['pack_size']) if selected_med is not None and pd.notnull(selected_med['pack_size']) else "")
            
             exp_val = date.today() + timedelta(days=365)
             if selected_med is not None and pd.notnull(selected_med['expiry_date']):
                 try:
                     exp_val = pd.to_datetime(selected_med['expiry_date']).date()
-                except:
+                except Exception:
                     pass
             expiry_date = st.date_input("Expiry Date:", value=exp_val)
 
@@ -126,29 +128,53 @@ if engine:
 
         # Logic: Add or Edit
         if btn_save:
-            if medicine_name:
-                with engine.connect() as conn:
-                    if selected_med is None: # Add New
-                        conn.execute(
-                            text("""
-                                INSERT INTO medicines (company_name, medicine_name, packing_type, pack_size, rate, indications, expiry_date, stock_available, indent)
-                                VALUES (:c, :m, :pt, :ps, :r, :i, :e, :s, :ind);
-                            """),
-                            {"c": company_name, "m": medicine_name, "pt": packing_type, "ps": pack_size, "r": rate, "i": indications, "e": expiry_date, "s": stock_available, "ind": indent}
-                        )
-                        st.success(f"Added '{medicine_name}' successfully!")
-                    else: # Update Existing
-                        conn.execute(
-                            text("""
-                                UPDATE medicines
-                                SET company_name=:c, medicine_name=:m, packing_type=:pt, pack_size=:ps, rate=:r, indications=:i, expiry_date=:e, stock_available=:s, indent=:ind
-                                WHERE CAST(sl_no AS TEXT) = :sl;
-                            """),
-                            {"c": company_name, "m": medicine_name, "pt": packing_type, "ps": pack_size, "r": rate, "i": indications, "e": expiry_date, "s": stock_available, "ind": indent, "sl": str(selected_med['sl_no'])}
-                        )
-                        st.success(f"Updated '{medicine_name}' successfully!")
-                    conn.commit()
-                st.rerun()
+            if medicine_name.strip():
+                try:
+                    with engine.connect() as conn:
+                        if selected_med is None: # Add New
+                            conn.execute(
+                                text("""
+                                    INSERT INTO medicines (company_name, medicine_name, packing_type, pack_size, rate, indications, expiry_date, stock_available, indent)
+                                    VALUES (:c, :m, :pt, :ps, :r, :i, :e, :s, :ind);
+                                """),
+                                {
+                                    "c": company_name,
+                                    "m": medicine_name,
+                                    "pt": packing_type,
+                                    "ps": pack_size,
+                                    "r": float(rate),
+                                    "i": indications,
+                                    "e": expiry_date,
+                                    "s": int(stock_available),
+                                    "ind": indent
+                                }
+                            )
+                            st.success(f"Added '{medicine_name}' successfully!")
+                        else: # Update Existing
+                            conn.execute(
+                                text("""
+                                    UPDATE medicines
+                                    SET company_name=:c, medicine_name=:m, packing_type=:pt, pack_size=:ps, rate=:r, indications=:i, expiry_date=:e, stock_available=:s, indent=:ind
+                                    WHERE sl_no = :sl;
+                                """),
+                                {
+                                    "c": company_name,
+                                    "m": medicine_name,
+                                    "pt": packing_type,
+                                    "ps": pack_size,
+                                    "r": float(rate),
+                                    "i": indications,
+                                    "e": expiry_date,
+                                    "s": int(stock_available),
+                                    "ind": indent,
+                                    "sl": int(selected_med['sl_no'])
+                                }
+                            )
+                            st.success(f"Updated '{medicine_name}' successfully!")
+                        conn.commit()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Save Error: {e}")
             else:
                 st.warning("Please enter Medicine Name.")
 
@@ -156,18 +182,21 @@ if engine:
         if btn_sale:
             if selected_med is not None and sale_qty > 0:
                 if sale_qty <= int(selected_med['stock_available']):
-                    with engine.connect() as conn:
-                        conn.execute(
-                            text("""
-                                UPDATE medicines
-                                SET stock_available = stock_available - :sq, total_sold = total_sold + :sq
-                                WHERE CAST(sl_no AS TEXT) = :sl;
-                            """),
-                            {"sq": sale_qty, "sl": str(selected_med['sl_no'])}
-                        )
-                        conn.commit()
-                    st.success(f"Sold {sale_qty} unit(s) of '{selected_med['medicine_name']}'. Total Amount: ₹{sale_qty * float(rate):.2f}")
-                    st.rerun()
+                    try:
+                        with engine.connect() as conn:
+                            conn.execute(
+                                text("""
+                                    UPDATE medicines
+                                    SET stock_available = stock_available - :sq, total_sold = total_sold + :sq
+                                    WHERE sl_no = :sl;
+                                """),
+                                {"sq": int(sale_qty), "sl": int(selected_med['sl_no'])}
+                            )
+                            conn.commit()
+                        st.success(f"Sold {sale_qty} unit(s) of '{selected_med['medicine_name']}'. Total Amount: ₹{sale_qty * float(rate):.2f}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Sale Record Error: {e}")
                 else:
                     st.error("Sale quantity exceeds available stock!")
             else:
@@ -250,7 +279,7 @@ if engine:
                     if selected_rows_to_del:
                         with engine.connect() as conn:
                             for sl in selected_rows_to_del:
-                                conn.execute(text("DELETE FROM medicines WHERE CAST(sl_no AS TEXT) = :sl;"), {"sl": str(sl)})
+                                conn.execute(text("DELETE FROM medicines WHERE sl_no = :sl;"), {"sl": int(sl)})
                             conn.commit()
                         st.success(f"Deleted {len(selected_rows_to_del)} item(s) successfully!")
                         st.rerun()
